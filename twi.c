@@ -349,3 +349,70 @@ int twi_read(twi_portname_t port, void *buf, uint16_t len, twi_end_t endstate) {
     /* all done */
     return 0;
 }
+
+/* quick implementation of a TWI bus reset by SCL toggling */
+
+int twi_bus_reset(twi_portname_t port) {
+  PORT_t *dio;
+  uint8_t n, oldpinconf;
+
+  if (!twi_ports[port] || port > MAX_TWI_PORTS) {
+    return -ENODEV;
+  }
+
+  switch (port) {
+  #ifdef TWIC
+    case twi_c:
+      dio = &PORTC;
+      break;
+  #endif
+  #ifdef TWIE
+    case twi_e:
+      dio = &PORTE;
+      break;
+  #endif
+    default:
+      return -ENODEV; /* should never be reached because of test above, but just in case */
+  }
+
+  /* disable the TWI port for now */
+  twi_ports[port]->hw->MASTER.CTRLA &= ~TWI_MASTER_ENABLE_bm;
+
+  /* SDA is always an input for bus reset */
+  dio->DIRCLR = PIN0_bm;
+
+  /* make SCL an input while we set up inital state for output */
+  dio->DIRCLR = PIN1_bm;
+  dio->OUTCLR = PIN1_bm; /* 0 will be float when configured as output-wiredand-invert */
+  /* use inverted, wired-and mode. This will act as 0 = float, 1 = drive low */
+  oldpinconf = dio->PIN1CTRL; /* save state to restore */
+  dio->PIN1CTRL = PORT_INVEN_bm | PORT_OPC_WIREDAND_gc;
+  /* finally make SCL output */
+  dio->DIRSET = PIN1_bm;
+
+  _delay_us(10);
+
+  for (n = 0; n < 9; n++) {
+    dio->OUTSET = PIN1_bm; /* drive SCL low */
+    _delay_us(10);
+    dio->OUTCLR = PIN1_bm; /* let SCL float */
+    _delay_us(10);
+  }
+
+  /* now issue a stop, drive SDA low and then raise */
+  dio->OUTCLR = PIN0_bm;
+  dio->DIRSET = PIN0_bm;
+  _delay_us(10);
+  dio->DIRCLR = PIN0_bm; /* let it float again */
+
+  /* restore pin configuration */
+  dio->PIN1CTRL = oldpinconf;
+  dio->DIRCLR = PIN0_bm | PIN1_bm; /* all inputs now */
+  dio->OUTCLR = PIN0_bm | PIN1_bm; /* assumed default */
+
+  /* re-enable TWI state */
+  twi_ports[port]->hw->MASTER.CTRLA |= TWI_MASTER_ENABLE_bm;
+  twi_ports[port]->hw->MASTER.STATUS = TWI_MASTER_BUSSTATE_IDLE_gc;
+
+  return 0;
+}

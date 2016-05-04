@@ -140,6 +140,7 @@ int twi_write(twi_portname_t port, void *buf, uint16_t len,
 int twi_read(twi_portname_t port, void *buf, uint16_t len,
             twi_end_t endstate);
 
+int twi_bus_reset(twi_portname_t port);
 
 #ifdef __cplusplus
 }
